@@ -1,11 +1,5 @@
 const std = @import("std");
-
 const puffinDB = @import("puffinDB");
-
-fn printTerminal(stdout: *std.Io.Writer, comptime text: []const u8, args: anytype) !void {
-    try stdout.print(text, args);
-    try stdout.flush();
-}
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -18,23 +12,34 @@ pub fn main(init: std.process.Init) !void {
     var std_file_reader = std.Io.File.stdin().reader(io, &stdin_buffer);
     const stdin = &std_file_reader.interface;
 
+    const terminal = puffinDB.Terminal{ .stdout = stdout, .stdin = stdin };
+
     while (true) {
-        try printTerminal(stdout, "db > ", .{});
+        try terminal.print("db > ", .{});
+        const command: []const u8 = (try terminal.read()) orelse break;
 
-        const input_line = (try stdin.takeDelimiter('\n')) orelse break;
-        var command: []const u8 = "";
-
-        //strip trailing '\r' if present
-        if (input_line.len > 0 and input_line[input_line.len - 1] == '\r') {
-            command = input_line[0 .. input_line.len - 1];
-        } else {
-            command = input_line;
+        if (command.len > 0 and command[0] == '.') {
+            switch (puffinDB.dotMetaCommand(command)) {
+                .success => continue,
+                .unrecognized_command => {
+                    try terminal.print("Unrecognized Command '{s}'\n", .{command});
+                    continue;
+                },
+            }
         }
 
-        if (std.mem.eql(u8, command, ".exit")) {
-            break;
-        } else {
-            try printTerminal(stdout, "Unrecognized command '{s}'. \n", .{command});
+        var statement: puffinDB.Statement = undefined;
+
+        switch (puffinDB.prepareStatement(command, &statement)) {
+            .success => {},
+            .unrecognized_statement => {
+                try terminal.print("Unrecognized keyword at start of '{s}'.\n", .{command});
+                continue;
+            },
         }
+
+        try puffinDB.executeStatement(statement, terminal);
+
+        try terminal.print("Executed. \n", .{});
     }
 }
